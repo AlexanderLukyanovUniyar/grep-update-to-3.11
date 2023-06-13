@@ -1,5 +1,5 @@
 /* dfasearch.c - searching subroutines using dfa and regex for grep.
-   Copyright 1992, 1998, 2000, 2007, 2009-2022 Free Software Foundation, Inc.
+   Copyright 1992, 1998, 2000, 2007, 2009-2023 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -53,14 +53,10 @@ dfaerror (char const *mesg)
   die (EXIT_TROUBLE, 0, "%s", mesg);
 }
 
-/* For now, the sole dfawarn-eliciting condition (use of a regexp
-   like '[:lower:]') is unequivocally an error, so treat it as such,
-   when possible.  */
 void
 dfawarn (char const *mesg)
 {
-  if (!getenv ("POSIXLY_CORRECT"))
-    dfaerror (mesg);
+  error (0, 0, _("warning: %s"), mesg);
 }
 
 /* If the DFA turns out to have some set of fixed strings one of
@@ -148,26 +144,34 @@ regex_compile (struct dfa_comp *dc, char const *p, idx_t len,
                idx_t pcount, idx_t lineno, reg_syntax_t syntax_bits,
                bool syntax_only)
 {
-  struct re_pattern_buffer pat0;
-  struct re_pattern_buffer *pat = syntax_only ? &pat0 : &dc->patterns[pcount];
-  pat->buffer = NULL;
-  pat->allocated = 0;
+  struct re_pattern_buffer pat;
+  pat.buffer = NULL;
+  pat.allocated = 0;
 
   /* Do not use a fastmap with -i, to work around glibc Bug#20381.  */
-  verify (UCHAR_MAX < IDX_MAX);
+  static_assert (UCHAR_MAX < IDX_MAX);
   idx_t uchar_max = UCHAR_MAX;
-  pat->fastmap = (syntax_only | match_icase) ? NULL : ximalloc (uchar_max + 1);
+  pat.fastmap = (syntax_only | match_icase) ? NULL : ximalloc (uchar_max + 1);
 
-  pat->translate = NULL;
+  pat.translate = NULL;
 
   if (syntax_only)
     re_set_syntax (syntax_bits | RE_NO_SUB);
   else
     re_set_syntax (syntax_bits);
 
-  char const *err = re_compile_pattern (p, len, pat);
+  char const *err = re_compile_pattern (p, len, &pat);
   if (!err)
-    return true;
+    {
+      if (syntax_only)
+        regfree (&pat);
+      else
+        dc->patterns[pcount] = pat;
+
+      return true;
+    }
+
+  free (pat.fastmap);
 
   /* Emit a filename:lineno: prefix for patterns taken from files.  */
   idx_t pat_lineno;
@@ -200,7 +204,10 @@ GEAcompile (char *pattern, idx_t size, reg_syntax_t syntax_bits,
 
   if (match_icase)
     syntax_bits |= RE_ICASE;
-  int dfaopts = eolbyte ? 0 : DFA_EOL_NUL;
+  int dfaopts = (DFA_CONFUSING_BRACKETS_ERROR | DFA_STRAY_BACKSLASH_WARN
+                 | DFA_PLUS_WARN
+                 | (syntax_bits & RE_CONTEXT_INDEP_OPS ? DFA_STAR_WARN : 0)
+                 | (eolbyte ? 0 : DFA_EOL_NUL));
   dfasyntax (dc->dfa, &localeinfo, syntax_bits, dfaopts);
   bool bs_safe = !localeinfo.multibyte | localeinfo.using_utf8;
 
@@ -254,8 +261,6 @@ GEAcompile (char *pattern, idx_t size, reg_syntax_t syntax_bits,
           dc->patterns++;
         }
 
-      re_set_syntax (syntax_bits);
-
       if (!regex_compile (dc, p, len, dc->pcount, lineno, syntax_bits,
                           !backref))
         compilation_failed = true;
@@ -274,20 +279,19 @@ GEAcompile (char *pattern, idx_t size, reg_syntax_t syntax_bits,
   if (compilation_failed)
     exit (EXIT_TROUBLE);
 
-  if (prev <= patlim)
+  if (patlim < prev)
+    buflen--;
+  else if (pattern < prev)
     {
-      if (pattern < prev)
-        {
-          idx_t prevlen = patlim - prev;
-          buf = xirealloc (buf, buflen + prevlen);
-          memcpy (buf + buflen, prev, prevlen);
-          buflen += prevlen;
-        }
-      else
-        {
-          buf = pattern;
-          buflen = size;
-        }
+      idx_t prevlen = patlim - prev;
+      buf = xirealloc (buf, buflen + prevlen);
+      memcpy (buf + buflen, prev, prevlen);
+      buflen += prevlen;
+    }
+  else
+    {
+      buf = pattern;
+      buflen = size;
     }
 
   /* In the match_words and match_lines cases, we use a different pattern

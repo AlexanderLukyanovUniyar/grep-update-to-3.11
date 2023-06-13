@@ -1,7 +1,7 @@
 dnl
 dnl autoconf input file for GNU grep
 dnl
-dnl Copyright (C) 1997-2006, 2009-2022 Free Software Foundation, Inc.
+dnl Copyright (C) 1997-2006, 2009-2023 Free Software Foundation, Inc.
 dnl
 dnl This file is part of GNU grep.
 dnl
@@ -68,11 +68,7 @@ gl_INIT
 AC_DEFINE([GNULIB_NO_VLA], [1], [Define to 1 to disable use of VLAs])
 
 # The test suite needs to know if we have a working perl.
-# FIXME: this is suboptimal.  Ideally, we would be able to call gl_PERL
-# with an ACTION-IF-NOT-FOUND argument ...
-cu_have_perl=yes
-case $PERL in *"/missing "*) cu_have_perl=no;; esac
-AM_CONDITIONAL([HAVE_PERL], [test $cu_have_perl = yes])
+AM_CONDITIONAL([HAVE_PERL], [test "$gl_cv_prog_perl" != no])
 
 # gl_GCC_VERSION_IFELSE([major], [minor], [run-if-found], [run-if-not-found])
 # ------------------------------------------------
@@ -142,6 +138,7 @@ if test $gl_gcc_warnings != no; then
   gl_WARN_ADD([-Wno-sign-compare])     # Too many warnings for now
   gl_WARN_ADD([-Wno-unused-parameter]) # Too many warnings for now
   gl_WARN_ADD([-Wno-cast-function-type]) # sig-handler.h's sa_handler_t cast
+  gl_WARN_ADD([-Wno-deprecated-declarations]) # clang complains about sprintf
 
   # In spite of excluding -Wlogical-op above, it is enabled, as of
   # gcc 4.5.0 20090517, and it provokes warnings in cat.c, dd.c, truncate.c
@@ -215,6 +212,7 @@ dnl then the installer should configure --with-included-regex.
 AM_CONDITIONAL([USE_INCLUDED_REGEX], [test "$ac_use_included_regex" = yes])
 if test "$ac_use_included_regex" = no; then
   AC_MSG_WARN([Included lib/regex.c not used])
+  AC_DEFINE([USE_INCLUDED_REGEX], 1, [building with included regex code])
 fi
 
 gl_FUNC_PCRE
